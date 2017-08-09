@@ -1,0 +1,119 @@
+package com.cwl.spark.ml.job
+
+import java.util.Random
+import com.cwl.spark.ml.utils.UserLabelHelper.getLabel
+import org.apache.spark.sql.Row
+import org.apache.spark.sql.types.{DoubleType, IntegerType, StringType, StructField, StructType}
+/**
+  * Created by wdc on 2017/5/25.
+  */
+object MakeLabelJob extends SparkBaseJob{
+
+  override def runJob: Unit = {
+    /**
+      * 从userinfo和user_index表中获取用户信息
+      */
+    val user_info_df = sqlContext.read.jdbc(gp_url, "userinfo", props)
+    val user_index_df = sqlContext.read.jdbc(gp_url,"user_index",props)
+    val allInfoDF = user_info_df.join(user_index_df, Seq("account","gender","citytype"))
+    allInfoDF.registerTempTable("infoTable")
+    val df1 = sqlContext.sql("select account, " +
+                                    "age, " +
+                                    "gender, " +
+                                    "provinceid, " +
+                                    "provincename, " +
+                                    "cityname, " +
+                                    "citytype, " +
+                                    "avgdailyvisit, " +
+                                    "avgdailyvisittime, " +
+                                    "ratioofvisitwith3page,"+
+                                    "avgdailyvisitsatworktime, " +
+                                    "avgdailyvisitsatofftime, " +
+                                    "avgdailymoney, " +
+                                    "maxdailymoney, " +
+                                    "avgweekvisitsatofftime, " +
+                                    "avgbetmultiple," +
+                                    "maxbetmultiple, " +
+                                    "avgweekbuycount " +
+                                    "from infoTable")
+
+    /**
+      * divlineDic 记录每个字段沉迷程度的分界值
+      */
+    val divlineDic = Map("avgdailyvisit"->List(2.1, 2.2, 2.3),
+                          "avgdailyvisittime"->List(400, 450, 500),
+                          "ratioofvisitwith3page"->List(0.13, 0.17, 0.21),
+                          "avgdailyvisitsatworktime"->List(0.09, 0.12, 0.15),
+                          "avgdailyvisitsatofftime"->List(0.27, 0.31, 0.37),
+                          "avgdailymoney"->List(2300, 2900, 3400),
+                          "avgweekvisitsatofftime"->List(1.4, 1.7, 2),
+                          "maxdailymoney"->List(12000, 16000, 20000),
+                          "avgbetmultiple"->List(32, 37, 40),
+                          "maxbetmultiple"->List(98, 99, 99),
+                          "avgweekbuycount"->List(7.8, 13, 14.5)
+    )
+    val df2 = df1.map{row =>
+      val keys = divlineDic.keys.toList
+      var labelMap:Map[Int,Int] = Map()
+      for(i <- 0 until keys.length-1){
+        val key = keys(i)
+        val valueList = divlineDic(key)
+        val value = row.getAs[Double](key)
+        val label_c = getLabel(valueList, value)
+        labelMap += (i->label_c)
+      }
+      /**
+        *  上面得到labelMap为每个字段对应的沉迷程度，下面将随机选择一个字段对应的沉迷度作为最终的沉迷程度
+        */
+      val random = new Random()
+      val rdnum = random.nextInt(keys.length-1)%(keys.length)
+      val label = labelMap(rdnum)
+      Row(row.getAs[String]("account"),
+          row.getAs[Int]("age"),
+          row.getAs[String]("gender"),
+          row.getAs[String]("provinceid"),
+          row.getAs[String]("provincename"),
+          row.getAs[String]("cityname"),
+          row.getAs[String]("citytype"),
+          row.getAs[Double]("avgdailyvisit"),
+          row.getAs[Double]("avgdailyvisittime"),
+          row.getAs[Double]("ratioofvisitwith3page"),
+          row.getAs[Double]("avgdailyvisitsatworktime"),
+          row.getAs[Double]("avgdailyvisitsatofftime"),
+          row.getAs[Double]("avgdailymoney"),
+          row.getAs[Double]("maxdailymoney"),
+          row.getAs[Double]("avgweekvisitsatofftime"),
+          row.getAs[Double]("avgbetmultiple"),
+          row.getAs[Double]("maxbetmultiple"),
+          row.getAs[Double]("avgweekbuycount"),
+          label)
+    }
+    val schema = StructType(Array(
+      StructField("account", StringType, nullable = true),
+      StructField("age", IntegerType, nullable = true),
+      StructField("gender", StringType, nullable = true),
+      StructField("provinceid", StringType, nullable = true),
+      StructField("provincename", StringType, nullable = true),
+      StructField("cityname", StringType, nullable = true),
+      StructField("citytype", StringType, nullable = true),
+      StructField("avgdailyvisit", DoubleType, nullable = true),
+      StructField("avgdailyvisittime", DoubleType, nullable = true),
+      StructField("ratioofvisitwith3page", DoubleType, nullable = true),
+      StructField("avgdailyvisitsatworktime", DoubleType, nullable = true),
+      StructField("avgdailyvisitsatofftime", DoubleType, nullable = true),
+      StructField("avgdailymoney", DoubleType, nullable = true),
+      StructField("maxdailymoney", DoubleType, nullable = true),
+      StructField("avgweekvisitsatofftime", DoubleType, nullable = true),
+      StructField("avgbetmultiple", DoubleType, nullable = true),
+      StructField("maxbetmultiple", DoubleType, nullable = true),
+      StructField("avgweekbuycount", DoubleType, nullable = true),
+      StructField("label", IntegerType, nullable = true)
+    ))
+    val df3 = sqlContext.createDataFrame(df2, schema)
+    df3.write.mode("overwrite").jdbc(gp_url, "antiaddiction_train", props)
+  }
+
+  def main(args: Array[String]): Unit = {
+    runJob
+  }
+}

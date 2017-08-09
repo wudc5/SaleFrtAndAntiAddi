@@ -1,0 +1,64 @@
+import com.cwl.spark.ml.job.MakeLabelJob.{gp_url, props, sqlContext}
+import com.cwl.spark.ml.job.SaleForecastJob.{hiveContext, resultset_lp}
+import org.apache.spark.mllib.tree.RandomForest
+import org.apache.spark.mllib.tree.model.RandomForestModel
+import org.apache.spark.mllib.util.MLUtils
+import org.apache.spark.{SparkConf, SparkContext}
+import org.apache.spark.sql.{DataFrame, SQLContext}
+import com.cwl.spark.ml.model.ARIMA.ARIMA
+//import com.cloudera.sparkts.models.ARIMA
+import org.apache.spark.mllib.linalg.Vectors
+import org.apache.spark.mllib.regression.{LinearRegressionWithSGD, LabeledPoint}
+import org.apache.spark.SparkContext
+import org.apache.spark.sql.Row
+
+object Test {
+
+  def test(): Unit ={
+    val user_index_df = sqlContext.read.jdbc(gp_url,"user_index",props)
+    val df2 = user_index_df.map{row =>
+      val account = row.getAs[String]("account")
+      sqlContext.read.jdbc(gp_url, "userinfo", props).registerTempTable("userinfoTable")
+      val tel = sqlContext.sql(String.format("select tel from userinfoTable where account = '%s'", account))
+      val userid = sqlContext.sql(String.format("select userid from userinfoTable where account = '%s'", account))
+      println("tel: ", tel)
+      println("userid: ", userid)
+      Row(account, tel, userid)
+    }
+    df2.foreach(println)
+
+
+  }
+
+  def test1(): Unit = {
+    val lines = scala.io.Source.fromFile("src/test/scala/lpsa2.data").getLines()
+    val ts = Vectors.dense(lines.map(_.toDouble).toArray)
+    val arimaModel = ARIMA.autoFit(ts)
+    //参数输出：
+    println("coefficients: " + arimaModel.coefficients.mkString(","))
+    val forecast = arimaModel.forecast(ts, 5)
+    //预测出后五个的值。
+    println("forecast of next 5 observations: " + forecast.toArray.mkString(","))
+  }
+
+  def linearModel(): Unit = {
+    val train_data = List(resultset_lp(1, 2630.0), resultset_lp(2, 2630.0), resultset_lp(3, 2630.0))
+    val train_DF = hiveContext.createDataFrame(train_data)
+    val parsedData = train_DF.map{ row =>
+      LabeledPoint(row.getAs[Double]("saleamount"), Vectors.dense(row.getAs[Int]("drawnum")))
+    }.cache()
+    println("parseData: ")
+    parsedData.foreach(println)
+
+    // 建立模型，进行预测
+    val model = LinearRegressionWithSGD.train(parsedData, 100, 0.1)
+    val pattern = new java.text.DecimalFormat("#.##")
+    val forecast_amount = pattern.format(model.predict(Vectors.dense(4))).toDouble
+    println("forecast_amount: " + forecast_amount)
+  }
+
+  def main(args: Array[String]): Unit = {
+//    test()
+    linearModel()
+  }
+}

@@ -1,0 +1,79 @@
+package com.cwl.spark.ml.job
+
+import com.cwl.spark.ml.features.StringIndex.stringIndexer
+import org.apache.spark.ml.clustering.KMeans
+import com.cwl.spark.ml.features.MergeFeatures.mergeFeatures
+/**
+  * Created by wdc on 2017/7/7.
+  */
+object MakeLableByClustering  extends SparkBaseJob{
+
+  override def runJob: Unit = {
+    val user_info_df = sqlContext.read.jdbc(gp_url, "userinfo", props)
+    val user_index_df = sqlContext.read.jdbc(gp_url,"user_index",props)
+    val allInfoDF = user_info_df.join(user_index_df, Seq("account","gender","citytype"))
+    allInfoDF.registerTempTable("infoTable")
+    val df1 = sqlContext.sql("select account, " +
+      "age, " +
+      "gender, " +
+      "provinceid, " +
+      "provincename, " +
+      "cityname, " +
+      "citytype, " +
+      "avgdailyvisit, " +
+      "avgdailyvisittime, " +
+      "ratioofvisitwith3page,"+
+      "avgdailyvisitsatworktime, " +
+      "avgdailyvisitsatofftime, " +
+      "avgdailymoney, " +
+      "maxdailymoney, " +
+      "avgweekvisitsatofftime, " +
+      "avgbetmultiple," +
+      "maxbetmultiple, " +
+      "avgweekbuycount " +
+      "from infoTable")
+  df1.show()
+
+    val genderScaled_DF = stringIndexer("gender", df1, "")
+//    val genderScaled_DF = stringIndexer("gender", df1, "")
+    val inputCols = Array(
+      "age",
+      "Indexed_gender",
+      "avgdailyvisit",
+      "avgdailyvisittime",
+      "ratioofvisitwith3page",
+      "avgdailyvisitsatworktime",
+      "avgdailyvisitsatofftime",
+      "avgdailymoney",
+      "avgweekvisitsatofftime",
+      "maxdailymoney",
+      "avgbetmultiple",
+      "maxbetmultiple",
+      "avgweekbuycount"
+    )
+    val mergedFeat_DF = mergeFeatures(genderScaled_DF, inputCols)
+    mergedFeat_DF.show()
+
+    val kmeans = new KMeans()
+      .setK(4)
+      .setFeaturesCol("features")
+      .setPredictionCol("label")
+    val model = kmeans.fit(mergedFeat_DF)
+    println("result: ")
+    val res_DF = model.transform(mergedFeat_DF)
+    println("0 类人群数："+res_DF.filter("label = '0'").count())
+    println("1 类人群数："+res_DF.filter("label = '1'").count())
+    println("2 类人群数："+res_DF.filter("label = '2'").count())
+    println("3 类人群数："+res_DF.filter("label = '3'").count())
+    println("4 类人群数："+res_DF.filter("label = '4'").count())
+
+    println("Final Centers: ")
+    model.clusterCenters.foreach(println)
+//    res_DF.drop("features")
+    res_DF.drop("features").write.mode("overwrite").jdbc(gp_url, "antiaddiction_train_0707", props)
+  }
+
+  def main(args: Array[String]): Unit = {
+    runJob
+  }
+}

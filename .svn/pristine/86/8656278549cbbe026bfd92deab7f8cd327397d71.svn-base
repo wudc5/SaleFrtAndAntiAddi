@@ -1,0 +1,67 @@
+package com.cwl.spark.ml.job
+
+import com.cwl.spark.ml.features.StringIndex.stringIndexer
+import org.apache.spark.ml.clustering.KMeans
+import com.cwl.spark.ml.features.MergeFeatures.mergeFeatures
+/**
+  * Created by wdc on 2017/7/7.
+  */
+object MakeLabelByClustering  extends SparkBaseJob{
+
+  override def runJob: Unit = {
+    val user_info_df = sqlContext.read.jdbc(gp_url, "userinfo", props)
+    val user_index_df = sqlContext.read.jdbc(gp_url,"user_index",props)
+    val allInfoDF = user_info_df.join(user_index_df, Seq("account","gender","citytype"))
+    allInfoDF.registerTempTable("infoTable")
+    val df1 = sqlContext.sql("select account, " +
+                                    "age, " +
+                                    "gender, " +
+                                    "provinceid, " +
+                                    "provincename, " +
+                                    "cityname, " +
+                                    "citytype, " +
+                                    "avgdailyvisit, " +
+                                    "avgdailyvisittime, " +
+                                    "ratioofvisitwith3page,"+
+                                    "avgdailyvisitsatworktime, " +
+                                    "avgdailyvisitsatofftime, " +
+                                    "avgdailymoney, " +
+                                    "maxdailymoney, " +
+                                    "avgweekvisitsatofftime, " +
+                                    "avgbetmultiple," +
+                                    "maxbetmultiple, " +
+                                    "avgweekbuycount " +
+                                    "from infoTable")
+
+    val genderScaled_DF = stringIndexer("gender", df1, "/user/ml/Classification/")
+    val inputCols = Array(
+      "age",
+      "Indexed_gender",
+      "avgdailyvisit",
+      "avgdailyvisittime",
+      "ratioofvisitwith3page",
+      "avgdailyvisitsatworktime",
+      "avgdailyvisitsatofftime",
+      "avgdailymoney",
+      "avgweekvisitsatofftime",
+      "maxdailymoney",
+      "avgbetmultiple",
+      "maxbetmultiple",
+      "avgweekbuycount"
+    )
+    val mergedFeat_DF = mergeFeatures(genderScaled_DF, inputCols)
+
+    val kmeans = new KMeans()
+      .setK(4)
+      .setFeaturesCol("features")
+      .setPredictionCol("label")
+    val model = kmeans.fit(mergedFeat_DF)
+    val res_DF = model.transform(mergedFeat_DF).drop("Indexed_gender").drop("features")
+
+    res_DF.write.mode("overwrite").jdbc(gp_url, "antiaddiction_train_0707", props)
+  }
+
+  def main(args: Array[String]): Unit = {
+    runJob
+  }
+}
