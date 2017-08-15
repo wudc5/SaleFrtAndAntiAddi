@@ -211,11 +211,10 @@ object SaleForecastJob2 extends SparkBaseJob{
             val statis_res = List(resultset_statis(uuid, "week", year*1000+cur_weekNum, getCurrentTime().split(" ")(0), provincename, provinceid, cityname, cityid, gamename, gameid, forecast_amount, true_amount))
             val res_DF = hiveContext.createDataFrame(statis_res)
             res_DF.show()
-//            res_DF.write.mode("append").jdbc(gp_url, "saleforecast", props)
+            res_DF.write.mode("append").jdbc(gp_url, "saleforecast_week", props)
           }
         }
       }
     }
-
   }
 }
