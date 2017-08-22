@@ -21,6 +21,36 @@ object DBHelper{
     return pg_df
   }
 
+  // do database update
+  def updatedataToPostgresql(param: Map[List[String],String], gp_url: String): Unit ={
+    val insertSql = "update saleforecast set true_amount = ? WHERE cityid = ? and gameid = ? and lotterynum = ?"
+    val conn = DriverManager.getConnection(gp_url)
+    val statement = conn.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_UPDATABLE)
+
+    try {
+      val datakeys = param.keys
+      println("datavalues: ", datakeys)
+      for(data <- datakeys){
+        println("insertSql: ", insertSql)
+        println("true_amount: ", data(3).toDouble)
+        println("cityid: ", data.head)
+        println("gameid: ", data(1))
+        println("lotterynum: ", data(2))
+        val prep = conn.prepareStatement(insertSql)
+        prep.setDouble(1, data(3).toDouble)
+        prep.setString(2, data.head)
+        prep.setString(3, data(1))
+        prep.setString(4, data(2))
+        println("update start.")
+        prep.executeUpdate()
+        println("update over.")
+      }
+    }
+    finally {
+      conn.close()
+    }
+  }
+
   def insertdataToPostgresql(param: Map[String, Any], gp_url: String): Unit ={
     val insertSql = s"""INSERT INTO dm_modelInfo (
                        | model_record_uuid,

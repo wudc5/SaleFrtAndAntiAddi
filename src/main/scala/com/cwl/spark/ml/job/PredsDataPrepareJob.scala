@@ -3,6 +3,7 @@ package com.cwl.spark.ml.job
 import com.cwl.spark.ml.utils.GetUUID.getUUID
 import com.cwl.spark.ml.utils.TimeHelper.getCurrentTime
 import org.postgresql.util.PSQLException
+import com.cwl.spark.ml.utils.DBHelper.updatedataToPostgresql
 
 object PredsDataPrepareJob extends SparkBaseJob {
 
@@ -65,9 +66,11 @@ object PredsDataPrepareJob extends SparkBaseJob {
       val drawsale_DF = hiveContext.read.jdbc(gp_url, "drawsalegrandtotal", props)
       drawsale_DF.registerTempTable("drawsaleTable")
       val game_maxdrawnum_Map = hiveContext.sql("select gameid, max(saledrawnumber) as drawnumber from drawsaleTable group by gameid").select("gameid", "drawnumber").map { row => (row.getAs[String]("gameid"), row.getAs[String]("drawnumber")) }.collectAsMap()
+//      val game_maxdrawnum_Map = Map("10001"->"2017100", "10003" -> "2017100")
       val citylist = hiveContext.sql("select distinct(cityid) as cityid from drawsaleTable where cityid is not null").collectAsList()
       log.info("citylist: " + citylist)
 
+      var totalfrontdrawinfo:Map[List[String], String] = Map()
       for (gameid <- gameidlist) {
         var drawnum = 1
         val maxdrawnum = game_maxdrawnum_Map(gameid).toString.toInt
@@ -226,11 +229,30 @@ object PredsDataPrepareJob extends SparkBaseJob {
           val data_res = List(dataInfo(uuid, "draw", drawnum, getCurrentTime(), provincename, provinceid, cityname, cityid, gamename, gameid, saleamount1, saleamount2, saleamount3, saleamount4, saleamount5, saleamount6, saleamount7, saleamount8, saleamount9, saleamount10))
           val res_DF = hiveContext.createDataFrame(data_res)
           allRes_DF = allRes_DF.unionAll(res_DF)
+
+          // 记录该城市该游戏该期前一期的销售额
+          val sql_2 = String.format("select sum(drawsaleamount) as saleamount from drawsaleTable where cityid = '%s' and gameid = '%s' and saledrawnumber = '%s'", cityid, gameid, (drawnum - 1).toString)
+          //      log.info("sql_2: " + sql_2)
+          val true_amount_tmp = hiveContext.sql(sql_2).first().getAs[java.math.BigDecimal]("saleamount")
+          var true_amount = 0.0
+          if (true_amount_tmp == null) {
+            true_amount = 0
+          } else {
+            true_amount = true_amount_tmp.toString.toDouble
+          }
+          println("cityid: ", cityid, "gameid: ", gameid, "lotterynum: ", drawnum-1, "true_amount: ", true_amount)
+          val frontdrawinfo = List(cityid, gameid, (drawnum-1).toString, true_amount.toString)
+          totalfrontdrawinfo += (frontdrawinfo -> "a")
         }
       }
       allRes_DF = allRes_DF.filter("uuid != 'init'")
       allRes_DF.write.mode("overwrite").jdbc(gp_url, "dataPrepare", props)
-    } else {
+
+      // 更新saleforecast表中前一期销售额
+      println("totalfrontdrawinfo: ", totalfrontdrawinfo)
+      updatedataToPostgresql(totalfrontdrawinfo, gp_url)
+    }
+    else {
       hiveContext.read.jdbc(gp_url, "drawgame", props).registerTempTable("drawgameTable")
       val cur_time = getCurrentTime()
       val gameMap = Map("10001" -> "双色球", "10003" -> "七乐彩")
@@ -238,18 +260,20 @@ object PredsDataPrepareJob extends SparkBaseJob {
       val drawsale_DF = hiveContext.read.jdbc(gp_url, "drawsalegrandtotal", props)
       drawsale_DF.registerTempTable("drawsaleTable")
       val game_maxdrawnum_Map = hiveContext.sql("select gameid, max(saledrawnumber) as drawnumber from drawsaleTable group by gameid").select("gameid", "drawnumber").map { row => (row.getAs[String]("gameid"), row.getAs[String]("drawnumber")) }.collectAsMap()
+//      val game_maxdrawnum_Map = Map("10001"->"2017100", "10003" -> "2017100")
       val cityidlist = hiveContext.sql("select distinct(cityid) as cityid from drawsaleTable where cityid is not null").collectAsList()
       log.info("citylist: " + cityidlist)
       val recentdraw_res = List(dataInfo("init", "", 1, "", "", "", "", "", "", "", 1, 2, 3, 4, 5, 6, 7, 8, 9, 10))
       var allrecentdrawinfo_DF = hiveContext.createDataFrame(recentdraw_res)
+      var totalfrontdrawinfo:Map[List[String], String] = Map()
       for (gameid <- gameidlist) {
-        val maxdrawnum = game_maxdrawnum_Map(gameid).toString.toInt
+        val maxdrawnum = game_maxdrawnum_Map(gameid).toInt
         var drawnum = 1
         val sql_periodinfo = String.format("select count(*)  as num from drawgameTable where gameid = '%s'  and drawnumber = '%s' and (drawbegintime<'%s' and drawendtime >'%s')", gameid, maxdrawnum.toString, cur_time, cur_time)
         val periodInfo = hiveContext.sql(sql_periodinfo).first().getAs[Long]("num")
-        if (periodInfo == 0) {
-          println("periodInfo: ", periodInfo)
 
+        // 如果期结则更新dataprepare表数据，同时更新saleforecast表中上一期彩票销售额
+        if (periodInfo == 0) {
           val datapre_DF = hiveContext.read.jdbc(gp_url, "dataprepare", props)
           drawnum = maxdrawnum + 1
           for (i <- 0 until cityidlist.size()) {
@@ -297,19 +321,34 @@ object PredsDataPrepareJob extends SparkBaseJob {
               val recentdrawinfo_DF = hiveContext.createDataFrame(recentdrawInfo)
               allrecentdrawinfo_DF = allrecentdrawinfo_DF.unionAll(recentdrawinfo_DF)
             }
+            // 记录该城市该游戏上一期的销售总额
+            val sql_2 = String.format("select sum(drawsaleamount) as saleamount from drawsaleTable where cityid = '%s' and gameid = '%s' and saledrawnumber = '%s'", cityid, gameid, (drawnum - 1).toString)
+            log.info("sql_2: " + sql_2)
+            val true_amount_tmp = hiveContext.sql(sql_2).first().getAs[java.math.BigDecimal]("saleamount")
+            var true_amount = 0.0
+            if (true_amount_tmp == null) {
+              true_amount = 0
+            } else {
+              true_amount = true_amount_tmp.toString.toDouble
+            }
+            println("cityid: ", cityid, "gameid: ", gameid, "lotterynum: ", drawnum-1, "true_amount: ", true_amount)
+            val frontdrawinfo = List(cityid, gameid, (drawnum-1).toString, true_amount.toString)
+            totalfrontdrawinfo += (frontdrawinfo -> "a")
           }
         }
       }
       // 获取dataprepare表中无需更新的数据，然后拼接保存
       val dpdata_DF = hiveContext.read.jdbc(gp_url, "dataprepare", props)
       dpdata_DF.registerTempTable("dpTable")
-
       allrecentdrawinfo_DF.registerTempTable("updateTable")
       val tmp_DF = hiveContext.sql(String.format("select a.*, b.uuid as uuid2 from dpTable a left join updateTable b on a.gameid = b.gameid and a.cityid = b.cityid"))
       val othergame_DF = tmp_DF.filter("uuid2 is null").drop("uuid2")
-
       val finalRes_DF = allrecentdrawinfo_DF.unionAll(othergame_DF).filter("uuid != 'init'")
       finalRes_DF.write.mode("overwrite").jdbc(gp_url, "dataprepare", props)
+
+      //更新前一期销售额
+      println("totalfrontdrawinfo: ", totalfrontdrawinfo)
+      updatedataToPostgresql(totalfrontdrawinfo, gp_url)
     }
   }
 

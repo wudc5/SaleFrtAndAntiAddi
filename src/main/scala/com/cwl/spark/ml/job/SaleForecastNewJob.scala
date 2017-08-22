@@ -1,11 +1,11 @@
 package com.cwl.spark.ml.job
 
-import com.cwl.spark.ml.utils.GetUUID.getUUID
 import org.apache.spark.mllib.linalg.Vectors
-import org.apache.spark.mllib.regression.LabeledPoint
 import com.cwl.spark.ml.utils.TimeHelper.getCurrentTime
 import com.cwl.spark.ml.model.ARIMA.ARIMA
 import org.apache.commons.math3.util.Incrementor.MaxCountExceededCallback
+import org.apache.spark.sql.Row
+import org.apache.spark.sql.types.{StructType, StructField, StringType, IntegerType, DoubleType}
 
 object SaleForecastNewJob extends SparkBaseJob {
 
@@ -30,72 +30,44 @@ object SaleForecastNewJob extends SparkBaseJob {
                              )
 
   override def runJob: Unit = {
+    println("start.")
     val gameMap = Map("10001" -> "双色球", "10003" -> "七乐彩")
     val gameidlist = gameMap.keys
-    //    val drawnumlist = List(2017057, 2017058, 2017059, 2017060, 2017061, 2017062, 2017063, 2017064, 2017065, 2017066)
 
     // 加载前十期销售额数据
-    val drawsale_DF = hiveContext.read.jdbc(gp_url, "dataprepare", props)
-    drawsale_DF.registerTempTable("dpTable")
-    val citylist = hiveContext.sql("select distinct(cityid) as cityid from dpTable where cityid is not null").collectAsList()
-    log.info("citylist: " + citylist)
+    val dpTable_DF = hiveContext.read.jdbc(gp_url, "dataprepare", props)
 
-
-    val statis_res = List(resultset_statis("init", "", 1, getCurrentTime(), "", "", "", "", "", "", 2, 2))
-    var allRes_DF = hiveContext.createDataFrame(statis_res)
-
-    for (row <- drawsale_DF) {
+    val finalRes_RDD = dpTable_DF.map { row =>
+      val uuid = row.getAs[String]("uuid")
       val drawnum = row.getAs[Int]("lotterynum")
+      val provincename = row.getAs[String]("provincename")
+      val provinceid = row.getAs[String]("provinceid")
+      val cityname = row.getAs[String]("cityname")
       val cityid = row.getAs[String]("cityid")
+      val gamename = row.getAs[String]("gamename")
       val gameid = row.getAs[String]("gameid")
-      //    for(i <- 0 until citylist.size()){
-      //      val cityid = citylist.get(i).getAs[String]("cityid")
-      //      if(cityid != null){
-      //        log.info("city: " + cityid)
-      //        for(gameid <- gameidlist){
-      //          log.info("gameid: " + gameid)
-      //          for(drawnum <- drawnumlist){
-      log.info("drawnum: " + drawnum)
-      val sql_1 = String.format("select amount1, amount2, amount3, amount4, amount5, amount6, amount7, amount8, amount9, amount10 from dpTable where cityid = '%s' and gameid = '%s' and lotterynum = '%s' order by preds_time desc limit 1", cityid, gameid, drawnum.toString)
-      val amountRow = hiveContext.sql(sql_1).first()
 
-      // 通过前10期的销售额预测该期
-      var saleamount1 = amountRow.getAs[Double]("amount1")
-      var saleamount2 = amountRow.getAs[Double]("amount2")
-      var saleamount3 = amountRow.getAs[Double]("amount3")
-      var saleamount4 = amountRow.getAs[Double]("amount4")
-      var saleamount5 = amountRow.getAs[Double]("amount5")
-      var saleamount6 = amountRow.getAs[Double]("amount6")
-      var saleamount7 = amountRow.getAs[Double]("amount7")
-      var saleamount8 = amountRow.getAs[Double]("amount8")
-      var saleamount9 = amountRow.getAs[Double]("amount9")
-      var saleamount10 = amountRow.getAs[Double]("amount10")
+      var saleamount1 = row.getAs[Double]("amount1")
+      var saleamount2 = row.getAs[Double]("amount2") + 1
+      var saleamount3 = row.getAs[Double]("amount3") + 2
+      var saleamount4 = row.getAs[Double]("amount4") + 3
+      var saleamount5 = row.getAs[Double]("amount5") + 4
+      var saleamount6 = row.getAs[Double]("amount6")
+      var saleamount7 = row.getAs[Double]("amount7") + 1
+      var saleamount8 = row.getAs[Double]("amount8") + 2
+      var saleamount9 = row.getAs[Double]("amount9") + 3
+      var saleamount10 = row.getAs[Double]("amount10") + 4
 
-      log.info("saleamount1: " + saleamount1)
-      log.info("saleamount2: " + saleamount2)
-      log.info("saleamount3: " + saleamount3)
-      log.info("saleamount4: " + saleamount4)
-      log.info("saleamount5: " + saleamount5)
-      log.info("saleamount6: " + saleamount6)
-      log.info("saleamount7: " + saleamount7)
-      log.info("saleamount8: " + saleamount8)
-      log.info("saleamount9: " + saleamount9)
-      log.info("saleamount10: " + saleamount10)
-      val train_data = List(resultset_lp(1, saleamount1),
-        resultset_lp(2, saleamount2),
-        resultset_lp(3, saleamount3),
-        resultset_lp(4, saleamount4),
-        resultset_lp(5, saleamount5),
-        resultset_lp(6, saleamount6),
-        resultset_lp(7, saleamount7),
-        resultset_lp(8, saleamount8),
-        resultset_lp(9, saleamount9),
-        resultset_lp(10, saleamount10)
-      )
-      val train_DF = hiveContext.createDataFrame(train_data)
-      val parsedData = train_DF.map { row =>
-        LabeledPoint(row.getAs[Double]("saleamount"), Vectors.dense(row.getAs[Int]("drawnum")))
-      }
+      println("saleamount1: ", saleamount1)
+      println("saleamount2: ", saleamount2)
+      println("saleamount3: ", saleamount3)
+      println("saleamount4: ", saleamount4)
+      println("saleamount5: ", saleamount5)
+      println("saleamount6: ", saleamount6)
+      println("saleamount7: ", saleamount7)
+      println("saleamount8: ", saleamount8)
+      println("saleamount9: ", saleamount9)
+      println("saleamount10: ", saleamount10)
 
       // 建立模型，进行预测
       var forecast_amount = 0.0
@@ -120,48 +92,26 @@ object SaleForecastNewJob extends SparkBaseJob {
       val pattern = new java.text.DecimalFormat("#.##")
       forecast_amount = pattern.format(forecast_amount).toDouble
 
-      // get true amount
-      hiveContext.read.jdbc(gp_url, "drawsalegrandtotal", props).registerTempTable("drawsaleTable")
-      val sql_2 = String.format("select sum(drawsaleamount) as saleamount from drawsaleTable where cityid = '%s' and gameid = '%s' and saledrawnumber = '%s'", cityid, gameid, drawnum.toString)
-      log.info("sql_2: " + sql_2)
-      val true_amount_tmp = hiveContext.sql(sql_2).first().getAs[java.math.BigDecimal]("saleamount")
-      var true_amount = 0.0
-      if (true_amount_tmp == null) {
-        true_amount = 0
-      } else {
-        true_amount = true_amount_tmp.toString.toDouble
-      }
-
-      // 保存结果
-      val sql_3 = String.format("select provinceid, provincename, cityname from dpTable where cityid = '%s' limit 1", cityid)
-      log.info("sql_3: " + sql_3)
-      val dataRow = hiveContext.sql(sql_3).first()
-      var provinceid = ""
-      var provincename = ""
-      var cityname = ""
-      try {
-        if (dataRow.get(0) != null) {
-          provinceid = dataRow.getAs[String]("provinceid")
-        }
-        if (dataRow.get(1) != null) {
-          provincename = dataRow.getAs[String]("provincename")
-        }
-        if (dataRow.get(2) != null) {
-          cityname = dataRow.getAs[String]("cityname")
-        }
-      }
-      val gamename = gameMap(gameid)
-      val uuid = getUUID()
-      //            val statis_res = List(resultset_statis(uuid, "draw", drawnum.toInt, getCurrentTime().split(" ")(0), provincename, provinceid, cityname, cityid, gamename, gameid, forecast_amount, true_amount))
-      val statis_res = List(resultset_statis(uuid, "draw", drawnum, getCurrentTime(), provincename, provinceid, cityname, cityid, gamename, gameid, forecast_amount, true_amount))
-      val res_DF = hiveContext.createDataFrame(statis_res)
-      allRes_DF = allRes_DF.unionAll(res_DF)
-      //          }
-      //        }
-      //      }
+      Row(uuid, "draw", drawnum, getCurrentTime(), provincename, provinceid, cityname, cityid, gamename, gameid, forecast_amount, 0.0)
     }
-    allRes_DF = allRes_DF.filter("uuid != 'init'")
-    allRes_DF.write.mode("append").jdbc(gp_url, "saleforecast", props)
+    val schema = StructType(Array(
+      StructField("uuid", StringType, nullable = true),
+      StructField("period", StringType, nullable = true),
+      StructField("lotterynum", IntegerType, nullable = true),
+      StructField("preds_time", StringType, nullable = true),
+      StructField("provincename", StringType, nullable = true),
+      StructField("provinceid", StringType, nullable = true),
+      StructField("cityname", StringType, nullable = true),
+      StructField("cityid", StringType, nullable = true),
+      StructField("gamename", StringType, nullable = true),
+      StructField("gameid", StringType, nullable = true),
+      StructField("forecast_amount", DoubleType, nullable = true),
+      StructField("true_amount", DoubleType, nullable = true)
+    ))
+    val finalRes_DF = hiveContext.createDataFrame(finalRes_RDD, schema)
+
+    // 保存结果
+    finalRes_DF.write.mode("append").jdbc(gp_url, "saleforecast", props)
   }
 
   def main(args: Array[String]): Unit = {
