@@ -61,6 +61,12 @@ object PredictJob extends SparkBaseJob{
     try{
       hiveContext.read.jdbc(gp_url,"antiaddiction_result",props).registerTempTable("t1")
       hiveContext.sql("select max(preds_time) as preds_time, account from t1 group by account").registerTempTable("t2")
+//      val df_tmp1 = hiveContext.sql("select t1.account as account, t1.status as status from t1 join t2 on (t1.account = t2.account and t1.preds_time = t2.preds_time)")
+//      df_tmp1.show(20)
+//      val df_tmp2 = df_tmp1.select("account", "status").map{row=> (row.getAs[String]("account"), row.getAs[Int]("status"))}
+//      println("df_tmp2's length: "+df_tmp2.count())
+//      accAndstatus = df_tmp2.collectAsMap()
+//      println("accAndstatus: "+ accAndstatus)
       accAndstatus = hiveContext.sql("select t1.account as account, t1.status as status from t1 join t2 on (t1.account = t2.account and t1.preds_time = t2.preds_time)").select("account", "status").map{row=> (row.getAs[String]("account"), row.getAs[Int]("status"))}.collectAsMap()
     }catch {
       case ex: AnalysisException=>{

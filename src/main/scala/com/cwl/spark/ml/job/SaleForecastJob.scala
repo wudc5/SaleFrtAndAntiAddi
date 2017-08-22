@@ -53,6 +53,10 @@ object SaleForecastJob extends SparkBaseJob{
     drawsale_DF.registerTempTable("drawsaleTable")
     val citylist = hiveContext.sql("select distinct(cityname) as cityname from drawsaleTable").collectAsList()
     log.info("citylist: "+citylist)
+
+    val statis_res = List(resultset_statis("null", "draw", 1, getCurrentTime().split(" ")(0), "", "", "", "", "", "", 2, 2))
+    var allRes_DF = hiveContext.createDataFrame(statis_res)
+
     for(i <- 0 until citylist.size()){
       val city = citylist.get(i).getAs[String]("cityname")
       if(city != null){
@@ -61,6 +65,7 @@ object SaleForecastJob extends SparkBaseJob{
           log.info("gameid: " + gameid)
           for(drawnum <- drawnumlist){
             log.info("drawnum: "+ drawnum)
+
             // 通过前10期的销售额预测该期
             val drawnum1 = (drawnum - 1).toString
             val drawnum2 = (drawnum - 2).toString
@@ -255,11 +260,13 @@ object SaleForecastJob extends SparkBaseJob{
             val uuid = getUUID()
             val statis_res = List(resultset_statis(uuid, "draw", drawnum, getCurrentTime().split(" ")(0), provincename, provinceid, city, cityid, gamename, gameid, forecast_amount, true_amount))
             val res_DF = hiveContext.createDataFrame(statis_res)
-            res_DF.write.mode("append").jdbc(gp_url, "saleforecast", props)
+            allRes_DF.unionAll(res_DF)
           }
         }
       }
     }
+    allRes_DF = allRes_DF.where("uuid != null")
+    allRes_DF.write.mode("append").jdbc(gp_url, "saleforecast", props)
   }
 
   def main(args: Array[String]): Unit = {
